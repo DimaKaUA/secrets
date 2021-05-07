@@ -1,13 +1,13 @@
 //jshint esversion:6
-require("dotenv").config()
+
 const express = require("express");
 const ejs = require("ejs");
 const mongoose = require("mongoose");
 const session = require("express-session");
 const passport = require("passport");
-const passportLocalMongoose = require("passport-local-mongoose");
+const flash = require("connect-flash");
+
 const GoogleStrategy = require("passport-google-oauth20").Strategy;
-const findOrCreate = require("mongoose-findorcreate");
 const FacebookStrategy = require("passport-facebook").Strategy;
 
 const app = express();
@@ -27,23 +27,12 @@ app.use(passport.session());
 
 app.use(express.static(__dirname + "/public"));
 
+app.set("views", __dirname + "/views");
 app.set("view engine", "ejs");
 
-mongoose.connect("mongodb://localhost:27017/userDB", {useNewUrlParser: true, useUnifiedTopology: true});
-mongoose.set("useCreateIndex", true);
+app.use(flash());
 
-const userSchema = new mongoose.Schema({
-  email: String,
-  password: String,
-  googleId: String,
-  facebookId: String,
-  secret: String
-});
-
-userSchema.plugin(passportLocalMongoose);
-userSchema.plugin(findOrCreate);
-
-const User = new mongoose.model("User", userSchema);
+const User = require("./models/user");
 
 passport.use(User.createStrategy());
 
@@ -63,7 +52,7 @@ passport.use(new GoogleStrategy({
     callbackURL: "http://localhost:3000/auth/google/secrets"
   },
   function(accessToken, refreshToken, profile, cb) {
-    User.findOrCreate({ googleId: profile.id }, function (err, user) {
+    User.findOrCreate({ googleId: profile.id, username: profile.emails[0].value }, function (err, user) {
       return cb(err, user);
     });
   }
@@ -75,132 +64,15 @@ passport.use(new FacebookStrategy({
     callbackURL: "http://localhost:3000/auth/facebook/secrets"
   },
   function(accessToken, refreshToken, profile, cb) {
-    User.findOrCreate({ facebookId: profile.id }, function (err, user) {
+    User.findOrCreate({ facebookId: profile.id, username: profile.displayName }, function (err, user) {
       return cb(err, user);
     });
   }
 ));
 
-app.get("/", function(req, res) {
-  
-  res.render("home");
-});
+app.use("/", require("./routes"));
 
-app.get("/auth/google", passport.authenticate("google", { scope: ["profile"]}));
+mongoose.connect("mongodb://localhost:27017/userDB", {useNewUrlParser: true, useUnifiedTopology: true});
+mongoose.set("useCreateIndex", true);
 
-app.get("/auth/google/secrets", 
-  passport.authenticate("google", { failureRedirect: "/login" }),
-  function(req, res) {
-    // Successful authentication, redirect home.
-    res.redirect("/secrets");
-  }
-);
-
-app.get("/auth/facebook", passport.authenticate("facebook"));
-
-app.get("/auth/facebook/secrets",
-  passport.authenticate("facebook", { failureRedirect: "/login" }),
-  function(req, res) {
-    // Successful authentication, redirect home.
-    res.redirect("/secrets");
-  }
-);
-
-app.get("/login", function(req, res) {
-  
-  res.render("login");
-});
-
-app.post("/login", function(req, res) {
-
-  const user = new User({
-    username: req.body.username,
-    password: req.body.password
-  });
-
-  req.login(user, function(err) {
-
-    if (err) {
-      console.log(err);
-      res.redirect("/login");
-    } else {
-      passport.authenticate("local", { failureRedirect: "/login" })(req, res, function() {
-        res.redirect("/secrets");
-      });
-    }
-  });
-});
-
-app.get("/register", function(req, res) {
-  
-  res.render("register");
-});
-
-app.post("/register", function(req, res) {
-
-  User.register({username: req.body.username}, req.body.password, function(err, user) {
-
-    if (err) {
-      console.log(err);
-      res.redirect("/register");
-    } else {
-      passport.authenticate("local")(req, res, function() {
-
-        res.redirect("/secrets");
-      });
-    }
-  });
-});
-
-app.get("/logout" , function(req, res) {
-
-  req.logout();
-  res.redirect("/");
-});
-
-app.get("/secrets", function(req, res) {
-
-  User.find({"secret": {$ne: null}}, function(err, foundUsers) {
-
-    if (err) {
-      console.log(err);
-    } else {
-      if (foundUsers) {
-        res.render("secrets", {usersWithSecrets: foundUsers});
-      }
-    }
-  });
-});
-
-app.get("/submit", function(req, res) {
-  
-  if (req.isAuthenticated()) {
-    res.render("submit");
-  } else {
-    res.redirect("/login");
-  }
-});
-
-app.post("/submit", function(req, res) {
-  
-  const newSecret = req.body.secret;
-
-  User.findById(req.user.id, function(err, foundUser) {
-
-    if (err) {
-      console.log(err);
-    } else {
-      if (foundUser) {
-        foundUser.secret = newSecret;
-        foundUser.save(function() {
-          res.render("secrets");
-        })
-      }
-    }
-  });
-});
-
-app.listen(3000, function() {
-
-  console.log("App is running on port 3000.");
-});
+module.exports = app;
